@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build, Push and Deploy
 
 on:
   push:
@@ -29,3 +29,30 @@ jobs:
           tags: |
             ghcr.io/prahalladjena1075/wisecow:latest
             ghcr.io/prahalladjena1075/wisecow:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create Kubernetes cluster (kind)
+        uses: helm/kind-action@v1
+
+      - name: Create TLS secret
+        run: |
+          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout tls.key -out tls.crt -subj "/CN=wisecow.local"
+          kubectl create secret tls wisecow-tls --cert=tls.crt --key=tls.key
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f k8s/
+          kubectl set image deployment/wisecow wisecow=ghcr.io/prahalladjena1075/wisecow:${{ github.sha }}
+          kubectl rollout status deployment/wisecow --timeout=180s
+          kubectl get pods,svc,ingress
+
+      - name: Test the Service
+        run: |
+          kubectl run curltest --rm -i --restart=Never --image=curlimages/curl -- curl -s http://wisecow-service
